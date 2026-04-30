@@ -1,0 +1,111 @@
+:root {
+  --bg: #0c0f0a;
+  --fg: #e8e2cf;
+  --muted: #8a8770;
+  --accent: #c9a86a;
+  --panel: rgba(12, 15, 10, 0.78);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  overflow: hidden;
+}
+
+#canvas-host {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+
+#canvas-host canvas {
+  display: block;
+}
+
+#hud {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  z-index: 10;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  pointer-events: none;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+}
+
+#status {
+  background: var(--panel);
+  border: 1px solid rgba(232, 226, 207, 0.12);
+  padding: 8px 12px;
+  border-radius: 2px;
+  backdrop-filter: blur(8px);
+}
+
+#controls {
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+#controls button,
+#controls select {
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid rgba(232, 226, 207, 0.18);
+  padding: 8px 12px;
+  border-radius: 2px;
+  font: inherit;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+#controls button:hover,
+#controls select:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#tooltip {
+  position: fixed;
+  z-index: 20;
+  pointer-events: none;
+  background: var(--panel);
+  border: 1px solid rgba(232, 226, 207, 0.18);
+  padding: 8px 10px;
+  border-radius: 2px;
+  font-size: 11px;
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+  backdrop-filter: blur(8px);
+  max-width: 220px;
+  transform: translate(12px, 12px);
+}
+
+#tooltip strong {
+  color: var(--accent);
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+#tooltip .row {
+  color: var(--muted);
+}
+
+#tooltip .row span {
+  color: var(--fg);
+}
