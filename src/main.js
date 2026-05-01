@@ -34,9 +34,11 @@ const state = {
   cursorX: -1e6,
   cursorY: -1e6,
   cursorActive: false,
-  camera: { rotX: 0, rotY: 0, zoom: 1 },
+  camera: { rotX: 0, rotY: 0, zoom: 1, panX: 0, panY: 0 },
   bendScale: 1.0,
   bendRegen: 1.0,
+  keys: { left: false, right: false },
+  drag: { active: false, moved: false, lastX: 0, lastY: 0 },
 };
 
 const FOCAL = 1100;
@@ -52,7 +54,7 @@ function frameTrig(cam) {
   };
 }
 
-function project(x, y, z, trig, baseX, baseY, zoom) {
+function project(x, y, z, trig, baseX, baseY, cam) {
   const dx = x - baseX;
   const dy = y - baseY;
   const x1 = dx * trig.cosY - z * trig.sinY;
@@ -60,10 +62,10 @@ function project(x, y, z, trig, baseX, baseY, zoom) {
   const y2 = dy * trig.cosX - z1 * trig.sinX;
   const z2 = dy * trig.sinX + z1 * trig.cosX;
   const persp = FOCAL / (FOCAL - z2);
-  const s = persp * zoom;
+  const s = persp * cam.zoom;
   return {
-    sx: baseX + x1 * s,
-    sy: baseY + y2 * s,
+    sx: baseX + x1 * s + cam.panX,
+    sy: baseY + y2 * s + cam.panY,
     z: z2,
     scale: s,
   };
@@ -178,20 +180,19 @@ const sketch = (p) => {
       return;
     }
 
-    if (state.cursorActive) {
-      const t = p.constrain(p.mouseX / p.width, 0, 1);
-      const target = BEND_MIN + t * (BEND_MAX - BEND_MIN);
-      state.bendScale += (target - state.bendScale) * BEND_EASE;
-      if (Math.abs(state.bendScale - state.bendRegen) > REGEN_THRESHOLD) {
-        state.skeleton = generateSkeleton({
-          width: p.width,
-          height: p.height,
-          seed: state.skeletonSeed,
-          bendScale: state.bendScale,
-        });
-        syncOrbsToCandidates();
-        state.bendRegen = state.bendScale;
-      }
+    let bendTarget = state.bendScale;
+    if (state.keys.left && !state.keys.right) bendTarget = BEND_MIN;
+    else if (state.keys.right && !state.keys.left) bendTarget = BEND_MAX;
+    state.bendScale += (bendTarget - state.bendScale) * BEND_EASE;
+    if (Math.abs(state.bendScale - state.bendRegen) > REGEN_THRESHOLD) {
+      state.skeleton = generateSkeleton({
+        width: p.width,
+        height: p.height,
+        seed: state.skeletonSeed,
+        bendScale: state.bendScale,
+      });
+      syncOrbsToCandidates();
+      state.bendRegen = state.bendScale;
     }
 
     const now = performance.now();
@@ -218,10 +219,37 @@ const sketch = (p) => {
     }
   };
 
+  p.mousePressed = () => {
+    if (p.mouseX < 0 || p.mouseY < 0 || p.mouseX > p.width || p.mouseY > p.height) return;
+    state.drag.active = true;
+    state.drag.moved = false;
+    state.drag.lastX = p.mouseX;
+    state.drag.lastY = p.mouseY;
+    state.hover = null;
+    tooltipEl.hidden = true;
+  };
+
   p.mouseDragged = () => {
+    if (state.drag.active) {
+      const dx = p.mouseX - state.drag.lastX;
+      const dy = p.mouseY - state.drag.lastY;
+      state.drag.lastX = p.mouseX;
+      state.drag.lastY = p.mouseY;
+      if (dx || dy) {
+        state.camera.panX += dx;
+        state.camera.panY += dy;
+        state.drag.moved = true;
+      }
+      state.cursorActive = false;
+      return;
+    }
     state.cursorX = p.mouseX;
     state.cursorY = p.mouseY;
     state.cursorActive = true;
+  };
+
+  p.mouseReleased = () => {
+    state.drag.active = false;
   };
 
   p.refresh = () => {
@@ -281,7 +309,7 @@ function drawBranchFront(p, points, front, maxOrd, time, trig, sk) {
     const isFront = distFromFront < FRONT_WINDOW;
 
     const sway = worldSway(pt.x, pt.y, pt.ord, maxOrd, time);
-    const pr = project(pt.x + sway.dx, pt.y + sway.dy, pt.z || 0, trig, sk.baseX, sk.baseY, state.camera.zoom);
+    const pr = project(pt.x + sway.dx, pt.y + sway.dy, pt.z || 0, trig, sk.baseX, sk.baseY, state.camera);
     const w = Math.max(1, (pt.w || PIXEL) * pr.scale);
 
     if (isFront) {
@@ -302,7 +330,7 @@ function drawOrbsFront(p, orbs, front, maxOrd, time, trig, sk) {
     const { core, halo } = orb.palette;
 
     const sway = worldSway(orb.x, orb.y, orb.ord, maxOrd, time);
-    const pr = project(orb.x + sway.dx, orb.y + sway.dy, orb.z || 0, trig, sk.baseX, sk.baseY, state.camera.zoom);
+    const pr = project(orb.x + sway.dx, orb.y + sway.dy, orb.z || 0, trig, sk.baseX, sk.baseY, state.camera);
     const push = cursorPushScreen(pr.sx, pr.sy, orb.ord / maxOrd);
     const x = pr.sx + push.dx;
     const y = pr.sy + push.dy;
@@ -365,7 +393,7 @@ function pickOrb(mx, my) {
   let best = null;
   let bestDist = 18;
   for (const orb of state.orbs) {
-    const pr = project(orb.x, orb.y, orb.z || 0, trig, sk.baseX, sk.baseY, state.camera.zoom);
+    const pr = project(orb.x, orb.y, orb.z || 0, trig, sk.baseX, sk.baseY, state.camera);
     const dx = mx - pr.sx;
     const dy = my - pr.sy;
     const d = Math.sqrt(dx * dx + dy * dy);
@@ -455,6 +483,31 @@ resetViewBtn.addEventListener("click", () => {
   state.camera.rotX = 0;
   state.camera.rotY = 0;
   state.camera.zoom = 1;
+  state.camera.panX = 0;
+  state.camera.panY = 0;
+});
+
+function isFormFocused() {
+  const el = document.activeElement;
+  if (!el || el === document.body) return false;
+  const tag = el.tagName;
+  return tag === "SELECT" || tag === "INPUT" || tag === "TEXTAREA";
+}
+
+window.addEventListener("keydown", (e) => {
+  if (isFormFocused()) return;
+  if (e.key === "ArrowLeft") {
+    state.keys.left = true;
+    e.preventDefault();
+  } else if (e.key === "ArrowRight") {
+    state.keys.right = true;
+    e.preventDefault();
+  }
+});
+
+window.addEventListener("keyup", (e) => {
+  if (e.key === "ArrowLeft") state.keys.left = false;
+  else if (e.key === "ArrowRight") state.keys.right = false;
 });
 
 (async () => {

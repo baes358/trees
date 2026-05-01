@@ -1,9 +1,9 @@
 const BOROUGH_TINT = {
-  Manhattan: { h: 188 },
-  Brooklyn: { h: 32 },
-  Queens: { h: 138 },
-  Bronx: { h: 96 },
-  "Staten Island": { h: 62 },
+  Manhattan: { h: 220 },
+  Brooklyn: { h: 280 },
+  Queens: { h: 55 },
+  Bronx: { h: 36 },
+  "Staten Island": { h: 85 },
 };
 
 const HEALTH_VIGOR = {

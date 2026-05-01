@@ -17,7 +17,7 @@ body {
   height: 100%;
   background: var(--bg);
   color: var(--fg);
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: "Chivo Mono", ui-monospace, "SF Mono", Menlo, monospace;
   overflow: hidden;
 }
 
@@ -29,6 +29,11 @@ body {
 
 #canvas-host canvas {
   display: block;
+  cursor: grab;
+}
+
+#canvas-host canvas:active {
+  cursor: grabbing;
 }
 
 #hud {
