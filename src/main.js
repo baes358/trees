@@ -9,6 +9,7 @@ const newShapeBtn = document.getElementById("new-shape");
 const resetViewBtn = document.getElementById("reset-view");
 const boroughEl = document.getElementById("borough");
 const tooltipEl = document.getElementById("tooltip");
+const loadingEl = document.getElementById("loading");
 
 const TREE_COUNT = 500;
 const GROWTH_DURATION_MS = 6500;
@@ -219,7 +220,8 @@ const sketch = (p) => {
     }
   };
 
-  p.mousePressed = () => {
+  p.mousePressed = (event) => {
+    if (event && event.target && event.target.tagName !== "CANVAS") return;
     if (p.mouseX < 0 || p.mouseY < 0 || p.mouseX > p.width || p.mouseY > p.height) return;
     state.drag.active = true;
     state.drag.moved = false;
@@ -513,4 +515,8 @@ window.addEventListener("keyup", (e) => {
 (async () => {
   await loadForest();
   instance.refresh();
+  if (loadingEl) {
+    loadingEl.classList.add("hidden");
+    setTimeout(() => loadingEl.remove(), 800);
+  }
 })();
