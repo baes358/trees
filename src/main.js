@@ -85,7 +85,7 @@ async function loadForest() {
       trees = await fetchTrees({ limit: TREE_COUNT, offset: 0, borough: state.borough });
     }
     state.trees = trees;
-    setStatus(`${trees.length} trees · ${state.borough || "all boroughs"}`);
+    setStatus(`${trees.length} TREES · ${state.borough || "ALL BOROUGHS"}`);
   } catch (err) {
     console.error(err);
     setStatus(`error: ${err.message}`);
