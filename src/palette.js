@@ -12,24 +12,24 @@ const HEALTH_VIGOR = {
   poor: 0.35,
 };
 
-export function paletteFor(tree) {
+export function orbPalette(tree) {
   const tint = BOROUGH_TINT[tree.borough] || { h: 160 };
   const dead = tree.status !== "Alive";
   const vigor = dead ? 0.05 : HEALTH_VIGOR[tree.health] ?? 0.7;
 
   const speciesShift = (hashSpecies(tree.species) - 0.5) * 28;
-  const branchHue = (tint.h + speciesShift + 360) % 360;
-  const tipHue = (branchHue + 18 + speciesShift) % 360;
+  const hue = (tint.h + speciesShift + 360) % 360;
 
   return {
-    branch: { h: branchHue, s: 18 + 24 * vigor, b: 78 + 18 * vigor },
-    halo: { h: branchHue, s: 60, b: 92 },
-    tip: { h: tipHue, s: 35 + 50 * vigor, b: 95 },
-    tipHalo: { h: tipHue, s: 80, b: 100 },
+    core: { h: hue, s: 25 + 50 * vigor, b: 95 + 5 * vigor },
+    halo: { h: hue, s: 70, b: 100 },
     vigor,
     dead,
   };
 }
+
+export const BRANCH_COLOR = { h: 168, s: 14, b: 56 };
+export const BRANCH_HALO = { h: 178, s: 50, b: 92 };
 
 const SPECIES_HASH = new Map();
 export function hashSpecies(name) {

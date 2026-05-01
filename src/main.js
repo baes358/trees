@@ -1,24 +1,73 @@
 import p5 from "p5";
 import { fetchTrees, randomOffset } from "./data.js";
-import { buildTreeForm, drawTreePoints, generateTreePoints } from "./tree.js";
+import { generateSkeleton, PIXEL } from "./skeleton.js";
+import { orbPalette, BRANCH_COLOR, BRANCH_HALO } from "./palette.js";
 
 const statusEl = document.getElementById("status");
 const reseedBtn = document.getElementById("reseed");
+const newShapeBtn = document.getElementById("new-shape");
+const resetViewBtn = document.getElementById("reset-view");
 const boroughEl = document.getElementById("borough");
 const tooltipEl = document.getElementById("tooltip");
 
-const TREE_COUNT = 280;
-const GROWTH_DURATION_MS = 5500;
-const STAGGER_MS = 6000;
+const TREE_COUNT = 500;
+const GROWTH_DURATION_MS = 6500;
+const FRONT_WINDOW = 60;
+const HOVER_RADIUS = 180;
+const HOVER_PUSH = 5;
+const SWAY_AMP = 1.2;
+
+const BEND_MIN = 0.25;
+const BEND_MAX = 1.7;
+const BEND_EASE = 0.12;
+const REGEN_THRESHOLD = 0.004;
 
 const state = {
   trees: [],
-  placed: [],
+  orbs: [],
+  skeleton: null,
+  skeletonSeed: 13,
   loading: false,
   borough: "",
   hover: null,
   startTime: 0,
+  cursorX: -1e6,
+  cursorY: -1e6,
+  cursorActive: false,
+  camera: { rotX: 0, rotY: 0, zoom: 1 },
+  bendScale: 1.0,
+  bendRegen: 1.0,
 };
+
+const FOCAL = 1100;
+const ROT_PER_PIXEL = 0.005;
+const TILT_LIMIT = Math.PI / 3;
+
+function frameTrig(cam) {
+  return {
+    cosY: Math.cos(cam.rotY),
+    sinY: Math.sin(cam.rotY),
+    cosX: Math.cos(cam.rotX),
+    sinX: Math.sin(cam.rotX),
+  };
+}
+
+function project(x, y, z, trig, baseX, baseY, zoom) {
+  const dx = x - baseX;
+  const dy = y - baseY;
+  const x1 = dx * trig.cosY - z * trig.sinY;
+  const z1 = dx * trig.sinY + z * trig.cosY;
+  const y2 = dy * trig.cosX - z1 * trig.sinX;
+  const z2 = dy * trig.sinX + z1 * trig.cosX;
+  const persp = FOCAL / (FOCAL - z2);
+  const s = persp * zoom;
+  return {
+    sx: baseX + x1 * s,
+    sy: baseY + y2 * s,
+    z: z2,
+    scale: s,
+  };
+}
 
 async function loadForest() {
   if (state.loading) return;
@@ -47,27 +96,48 @@ function setStatus(text) {
   statusEl.textContent = text;
 }
 
-function placeForest(p) {
-  const w = p.width;
-  const h = p.height;
-  const horizon = h * 0.28;
-  const groundDepth = h - horizon;
-
-  state.placed = state.trees.map((tree, i) => {
-    const form = buildTreeForm(tree);
-    const points = generateTreePoints(tree, form);
-    const r = pseudoRand((Number(tree.id) || i) * 3.71);
-    const r2 = pseudoRand((Number(tree.id) || i) * 7.13 + 1);
-    const depthT = r;
-    const y = horizon + Math.pow(depthT, 1.5) * groundDepth;
-    const x = r2 * w;
-    const scale = 0.32 + 0.95 * Math.pow(depthT, 1.05);
-    const startDelay = pseudoRand((Number(tree.id) || i) * 1.91 + 5) * STAGGER_MS;
-    return { tree, form, points, x, y, scale, z: y, startDelay };
-  });
-
-  state.placed.sort((a, b) => a.z - b.z);
+function placeOrbs() {
+  const sk = state.skeleton;
+  if (!sk || !state.trees.length) {
+    state.orbs = [];
+    return;
+  }
+  const orbs = [];
+  for (let i = 0; i < state.trees.length; i++) {
+    const tree = state.trees[i];
+    const dbh = Math.max(1, tree.dbh || 4);
+    const sizeT = Math.min(1, Math.log10(dbh + 1) / 1.6);
+    orbs.push({
+      tree,
+      x: 0,
+      y: 0,
+      z: 0,
+      ord: 0,
+      sizeT,
+      palette: orbPalette(tree),
+    });
+  }
+  state.orbs = orbs;
+  syncOrbsToCandidates();
   state.startTime = performance.now();
+}
+
+function syncOrbsToCandidates() {
+  const sk = state.skeleton;
+  if (!sk || !state.orbs.length) return;
+  const candidates = sk.candidates;
+  for (let i = 0; i < state.orbs.length; i++) {
+    const orb = state.orbs[i];
+    const cand = candidates[i % candidates.length];
+    const id = Number(orb.tree.id) || i;
+    const jx = (pseudoRand(id * 1.7) - 0.5) * 8;
+    const jy = (pseudoRand(id * 2.3 + 1) - 0.5) * 8;
+    const jz = (pseudoRand(id * 4.1 + 2) - 0.5) * 8;
+    orb.x = Math.round((cand.x + jx) / PIXEL) * PIXEL;
+    orb.y = Math.round((cand.y + jy) / PIXEL) * PIXEL;
+    orb.z = Math.round(((cand.z || 0) + jz) / PIXEL) * PIXEL;
+    orb.ord = cand.ord;
+  }
 }
 
 function pseudoRand(seed) {
@@ -88,14 +158,14 @@ const sketch = (p) => {
     p.pixelDensity(1);
     p.frameRate(45);
     lastWidth = p.width;
-    bgLayer = makeBackground(p);
+    rebuildLayers(p);
   };
 
   p.windowResized = () => {
     p.resizeCanvas(window.innerWidth, window.innerHeight);
     if (Math.abs(p.width - lastWidth) > 4) {
-      bgLayer = makeBackground(p);
-      placeForest(p);
+      rebuildLayers(p);
+      placeOrbs();
       lastWidth = p.width;
     }
   };
@@ -103,25 +173,43 @@ const sketch = (p) => {
   p.draw = () => {
     if (bgLayer) p.image(bgLayer, 0, 0);
 
-    if (!state.placed.length) {
+    if (!state.skeleton || !state.orbs.length) {
       drawIdleHint(p);
       return;
     }
 
-    const now = performance.now();
-    for (const item of state.placed) {
-      const elapsed = now - state.startTime - item.startDelay;
-      const growth = p.constrain(elapsed / GROWTH_DURATION_MS, 0, 1);
-      if (growth <= 0) continue;
-      p.push();
-      p.translate(item.x, item.y);
-      drawTreePoints(p, item.points, item.form, growth, item.scale);
-      p.pop();
+    if (state.cursorActive) {
+      const t = p.constrain(p.mouseX / p.width, 0, 1);
+      const target = BEND_MIN + t * (BEND_MAX - BEND_MIN);
+      state.bendScale += (target - state.bendScale) * BEND_EASE;
+      if (Math.abs(state.bendScale - state.bendRegen) > REGEN_THRESHOLD) {
+        state.skeleton = generateSkeleton({
+          width: p.width,
+          height: p.height,
+          seed: state.skeletonSeed,
+          bendScale: state.bendScale,
+        });
+        syncOrbsToCandidates();
+        state.bendRegen = state.bendScale;
+      }
     }
+
+    const now = performance.now();
+    const elapsed = now - state.startTime;
+    const progress = p.constrain(elapsed / GROWTH_DURATION_MS, 0, 1);
+    const front = progress * state.skeleton.maxOrd;
+    const trig = frameTrig(state.camera);
+    const sk = state.skeleton;
+
+    drawBranchFront(p, sk.branchPoints, front, sk.maxOrd, now, trig, sk);
+    drawOrbsFront(p, state.orbs, front, sk.maxOrd, now, trig, sk);
   };
 
   p.mouseMoved = () => {
-    const hit = pickTree(p.mouseX, p.mouseY);
+    state.cursorX = p.mouseX;
+    state.cursorY = p.mouseY;
+    state.cursorActive = true;
+    const hit = pickOrb(p.mouseX, p.mouseY);
     if (hit !== state.hover) {
       state.hover = hit;
       updateTooltip(hit, p.mouseX, p.mouseY);
@@ -130,56 +218,160 @@ const sketch = (p) => {
     }
   };
 
+  p.mouseDragged = () => {
+    state.cursorX = p.mouseX;
+    state.cursorY = p.mouseY;
+    state.cursorActive = true;
+  };
+
   p.refresh = () => {
-    placeForest(p);
+    placeOrbs();
+  };
+
+  function rebuildLayers(p) {
+    bgLayer = makeBackground(p);
+    state.skeleton = generateSkeleton({
+      width: p.width,
+      height: p.height,
+      seed: state.skeletonSeed,
+      bendScale: state.bendScale,
+    });
+    state.bendRegen = state.bendScale;
+  }
+
+  p.regenerateShape = () => {
+    state.skeletonSeed = Math.floor(Math.random() * 100000);
+    state.skeleton = generateSkeleton({
+      width: p.width,
+      height: p.height,
+      seed: state.skeletonSeed,
+      bendScale: state.bendScale,
+    });
+    state.bendRegen = state.bendScale;
+    placeOrbs();
   };
 };
+
+function worldSway(x, y, ord, maxOrd, time) {
+  const swayScale = ord / maxOrd;
+  const seed = ((x | 0) * 73856093) ^ ((y | 0) * 19349663);
+  const phase = ((seed >>> 0) % 1000) / 1000 * Math.PI * 2;
+  const dx = Math.sin(time * 0.0011 + phase) * SWAY_AMP * swayScale;
+  const dy = Math.cos(time * 0.0009 + phase * 1.3) * SWAY_AMP * 0.7 * swayScale;
+  return { dx, dy };
+}
+
+function cursorPushScreen(sx, sy, swayScale) {
+  if (!state.cursorActive) return { dx: 0, dy: 0 };
+  const mdx = sx - state.cursorX;
+  const mdy = sy - state.cursorY;
+  const md2 = mdx * mdx + mdy * mdy;
+  if (md2 >= HOVER_RADIUS * HOVER_RADIUS || md2 <= 0.5) return { dx: 0, dy: 0 };
+  const md = Math.sqrt(md2);
+  const force = (1 - md / HOVER_RADIUS) * HOVER_PUSH * (0.35 + 0.65 * swayScale);
+  return { dx: (mdx / md) * force, dy: (mdy / md) * force };
+}
+
+function drawBranchFront(p, points, front, maxOrd, time, trig, sk) {
+  p.noStroke();
+  for (let i = 0; i < points.length; i++) {
+    const pt = points[i];
+    if (pt.ord > front) break;
+    const distFromFront = front - pt.ord;
+    const isFront = distFromFront < FRONT_WINDOW;
+
+    const sway = worldSway(pt.x, pt.y, pt.ord, maxOrd, time);
+    const pr = project(pt.x + sway.dx, pt.y + sway.dy, pt.z || 0, trig, sk.baseX, sk.baseY, state.camera.zoom);
+    const w = Math.max(1, (pt.w || PIXEL) * pr.scale);
+
+    if (isFront) {
+      p.fill(BRANCH_HALO.h, BRANCH_HALO.s, BRANCH_HALO.b, 14);
+      p.rect(pr.sx - w, pr.sy - w, w * 3, w * 3);
+    }
+    p.fill(BRANCH_COLOR.h, BRANCH_COLOR.s, BRANCH_COLOR.b, isFront ? 96 : 72);
+    p.rect(pr.sx, pr.sy, w, w);
+  }
+}
+
+function drawOrbsFront(p, orbs, front, maxOrd, time, trig, sk) {
+  p.noStroke();
+  for (const orb of orbs) {
+    if (orb.ord > front) continue;
+    const distFromFront = front - orb.ord;
+    const isFront = distFromFront < FRONT_WINDOW;
+    const { core, halo } = orb.palette;
+
+    const sway = worldSway(orb.x, orb.y, orb.ord, maxOrd, time);
+    const pr = project(orb.x + sway.dx, orb.y + sway.dy, orb.z || 0, trig, sk.baseX, sk.baseY, state.camera.zoom);
+    const push = cursorPushScreen(pr.sx, pr.sy, orb.ord / maxOrd);
+    const x = pr.sx + push.dx;
+    const y = pr.sy + push.dy;
+
+    const pulse = 0.92 + 0.08 * Math.sin(time * 0.0016 + orb.x * 0.013);
+    const baseAlpha = isFront ? 100 : 90;
+    const px = Math.max(1, PIXEL * pr.scale);
+
+    p.fill(halo.h, halo.s, halo.b, isFront ? 22 : 12);
+    p.rect(x - px * 2, y - px * 2, px * 5, px * 5);
+    p.fill(halo.h, halo.s, halo.b, isFront ? 40 : 22);
+    p.rect(x - px, y - px, px * 3, px * 3);
+
+    const coreSize = Math.max(1, (PIXEL + Math.round(orb.sizeT * 2)) * pr.scale);
+    p.fill(core.h, core.s, core.b, baseAlpha * pulse);
+    p.rect(x, y, coreSize, coreSize);
+  }
+}
 
 function makeBackground(p) {
   const g = p.createGraphics(p.width, p.height);
   g.colorMode(p.HSB, 360, 100, 100, 100);
   g.noStroke();
+
   const top = g.color(220, 30, 6);
-  const horizon = g.color(180, 28, 14);
-  const ground = g.color(140, 18, 4);
-  const horizonY = p.height * 0.28;
+  const mid = g.color(200, 22, 10);
+  const horizon = g.color(160, 18, 8);
+  const ground = g.color(140, 14, 4);
+  const horizonY = p.height * 0.88;
 
   for (let y = 0; y < horizonY; y++) {
     const t = y / horizonY;
-    const c = g.lerpColor(top, horizon, Math.pow(t, 0.8));
-    g.stroke(c);
+    const c = g.lerpColor(top, mid, Math.pow(t, 0.7));
+    const c2 = t > 0.7 ? g.lerpColor(c, horizon, (t - 0.7) / 0.3) : c;
+    g.stroke(c2);
     g.line(0, y, p.width, y);
   }
   for (let y = horizonY; y < p.height; y++) {
     const t = (y - horizonY) / (p.height - horizonY);
-    const c = g.lerpColor(horizon, ground, Math.pow(t, 0.7));
+    const c = g.lerpColor(horizon, ground, Math.pow(t, 0.6));
     g.stroke(c);
     g.line(0, y, p.width, y);
   }
 
   g.noStroke();
-  for (let i = 0; i < 240; i++) {
+  for (let i = 0; i < 220; i++) {
     const y = horizonY + Math.random() * (p.height - horizonY);
-    const t = (y - horizonY) / (p.height - horizonY);
     const x = Math.random() * p.width;
-    g.fill(150, 12, 8 + t * 10, 30);
-    g.rect(x, y, 2, 2);
+    g.fill(150, 12, 12, 28);
+    g.rect(x, y, 2, 1);
   }
 
   return g;
 }
 
-function pickTree(mx, my) {
+function pickOrb(mx, my) {
+  if (!state.skeleton) return null;
+  const trig = frameTrig(state.camera);
+  const sk = state.skeleton;
   let best = null;
-  let bestDist = 36;
-  for (let i = state.placed.length - 1; i >= 0; i--) {
-    const it = state.placed[i];
-    const dx = mx - it.x;
-    const dy = my - (it.y - it.form.baseLength * it.scale * 0.5);
-    const d = Math.sqrt(dx * dx + dy * dy) / it.scale;
+  let bestDist = 18;
+  for (const orb of state.orbs) {
+    const pr = project(orb.x, orb.y, orb.z || 0, trig, sk.baseX, sk.baseY, state.camera.zoom);
+    const dx = mx - pr.sx;
+    const dy = my - pr.sy;
+    const d = Math.sqrt(dx * dx + dy * dy);
     if (d < bestDist) {
       bestDist = d;
-      best = it;
+      best = orb;
     }
   }
   return best;
@@ -223,10 +415,46 @@ reseedBtn.addEventListener("click", async () => {
   instance.refresh();
 });
 
+newShapeBtn.addEventListener("click", () => {
+  instance.regenerateShape();
+});
+
 boroughEl.addEventListener("change", async (e) => {
   state.borough = e.target.value;
   await loadForest();
   instance.refresh();
+});
+
+const canvasHost = document.getElementById("canvas-host");
+canvasHost.addEventListener("mouseleave", () => {
+  state.cursorActive = false;
+  state.hover = null;
+  tooltipEl.hidden = true;
+});
+
+canvasHost.addEventListener(
+  "wheel",
+  (e) => {
+    e.preventDefault();
+
+    if (e.ctrlKey || e.metaKey) {
+      const factor = Math.exp(-e.deltaY * 0.012);
+      state.camera.zoom = Math.max(0.25, Math.min(8, state.camera.zoom * factor));
+    } else {
+      state.camera.rotY += e.deltaX * ROT_PER_PIXEL;
+      state.camera.rotX = Math.max(
+        -TILT_LIMIT,
+        Math.min(TILT_LIMIT, state.camera.rotX + e.deltaY * ROT_PER_PIXEL)
+      );
+    }
+  },
+  { passive: false }
+);
+
+resetViewBtn.addEventListener("click", () => {
+  state.camera.rotX = 0;
+  state.camera.rotY = 0;
+  state.camera.zoom = 1;
 });
 
 (async () => {
