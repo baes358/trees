@@ -1,8 +1,8 @@
 :root {
-  --bg: #0c0f0a;
-  --fg: #e8e2cf;
-  --muted: #8a8770;
-  --accent: #c9a86a;
+  --bg: #2d2d2d;
+  --fg: #f9f9f9;
+  --muted: #99a9c1;
+  --accent: #0066ff;
   --panel: rgba(12, 15, 10, 0.78);
 }
 
@@ -17,7 +17,7 @@ body {
   height: 100%;
   background: var(--bg);
   color: var(--fg);
-  font-family: "Chivo Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: "Victor Mono", ui-monospace, "SF Mono", Menlo, monospace;
   overflow: hidden;
 }
 
