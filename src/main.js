@@ -254,6 +254,11 @@ const sketch = (p) => {
     state.drag.active = false;
   };
 
+  // Disable p5's touch->mouse forwarding; we handle touch ourselves.
+  p.touchStarted = () => false;
+  p.touchMoved = () => false;
+  p.touchEnded = () => false;
+
   p.refresh = () => {
     placeOrbs();
   };
@@ -481,6 +486,142 @@ canvasHost.addEventListener(
   { passive: false }
 );
 
+const touchState = {
+  mode: null, // 'one' | 'gesture' | null
+  pointers: new Map(),
+  lastDist: 0,
+  lastCx: 0,
+  lastCy: 0,
+  tapStart: 0,
+  tapX: 0,
+  tapY: 0,
+  tapMoved: false,
+};
+
+function localTouchPoint(touch) {
+  const rect = canvasHost.getBoundingClientRect();
+  return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+}
+
+function recomputeGesture() {
+  const pts = [...touchState.pointers.values()];
+  if (pts.length < 2) return;
+  const dx = pts[0].x - pts[1].x;
+  const dy = pts[0].y - pts[1].y;
+  touchState.lastDist = Math.hypot(dx, dy);
+  touchState.lastCx = (pts[0].x + pts[1].x) / 2;
+  touchState.lastCy = (pts[0].y + pts[1].y) / 2;
+}
+
+canvasHost.addEventListener(
+  "touchstart",
+  (e) => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      touchState.pointers.set(t.identifier, localTouchPoint(t));
+    }
+    const n = touchState.pointers.size;
+    if (n === 1) {
+      const [p] = touchState.pointers.values();
+      touchState.mode = "one";
+      touchState.tapStart = performance.now();
+      touchState.tapX = p.x;
+      touchState.tapY = p.y;
+      touchState.tapMoved = false;
+      state.hover = null;
+      tooltipEl.hidden = true;
+    } else if (n >= 2) {
+      touchState.mode = "gesture";
+      recomputeGesture();
+      touchState.tapMoved = true;
+    }
+  },
+  { passive: false }
+);
+
+canvasHost.addEventListener(
+  "touchmove",
+  (e) => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      if (!touchState.pointers.has(t.identifier)) continue;
+      const prev = touchState.pointers.get(t.identifier);
+      const cur = localTouchPoint(t);
+      if (touchState.mode === "one") {
+        state.camera.panX += cur.x - prev.x;
+        state.camera.panY += cur.y - prev.y;
+        if (Math.hypot(cur.x - touchState.tapX, cur.y - touchState.tapY) > 10) {
+          touchState.tapMoved = true;
+        }
+      }
+      touchState.pointers.set(t.identifier, cur);
+    }
+    if (touchState.mode === "gesture") {
+      const pts = [...touchState.pointers.values()];
+      if (pts.length >= 2) {
+        const dx = pts[0].x - pts[1].x;
+        const dy = pts[0].y - pts[1].y;
+        const dist = Math.hypot(dx, dy);
+        const cx = (pts[0].x + pts[1].x) / 2;
+        const cy = (pts[0].y + pts[1].y) / 2;
+        if (touchState.lastDist > 0) {
+          const factor = dist / touchState.lastDist;
+          state.camera.zoom = Math.max(0.25, Math.min(8, state.camera.zoom * factor));
+        }
+        const ddx = cx - touchState.lastCx;
+        const ddy = cy - touchState.lastCy;
+        state.camera.rotY += ddx * ROT_PER_PIXEL * 0.6;
+        state.camera.rotX = Math.max(
+          -TILT_LIMIT,
+          Math.min(TILT_LIMIT, state.camera.rotX + ddy * ROT_PER_PIXEL * 0.6)
+        );
+        touchState.lastDist = dist;
+        touchState.lastCx = cx;
+        touchState.lastCy = cy;
+      }
+    }
+  },
+  { passive: false }
+);
+
+function endTouch(e) {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    touchState.pointers.delete(t.identifier);
+  }
+  const remaining = touchState.pointers.size;
+  if (remaining === 0) {
+    if (touchState.mode === "one" && !touchState.tapMoved) {
+      const dt = performance.now() - touchState.tapStart;
+      if (dt < 300) {
+        const hit = pickOrb(touchState.tapX, touchState.tapY);
+        state.hover = hit;
+        if (hit) {
+          updateTooltip(hit, touchState.tapX, touchState.tapY);
+          const tappedHit = hit;
+          setTimeout(() => {
+            if (state.hover === tappedHit) {
+              state.hover = null;
+              tooltipEl.hidden = true;
+            }
+          }, 4000);
+        } else {
+          tooltipEl.hidden = true;
+        }
+      }
+    }
+    touchState.mode = null;
+  } else if (remaining === 1) {
+    touchState.mode = "one";
+    touchState.tapMoved = true;
+  } else {
+    recomputeGesture();
+  }
+}
+
+canvasHost.addEventListener("touchend", endTouch, { passive: false });
+canvasHost.addEventListener("touchcancel", endTouch, { passive: false });
+
 resetViewBtn.addEventListener("click", () => {
   state.camera.rotX = 0;
   state.camera.rotY = 0;
@@ -512,11 +653,22 @@ window.addEventListener("keyup", (e) => {
   else if (e.key === "ArrowRight") state.keys.right = false;
 });
 
+function hideLoading() {
+  if (!loadingEl || loadingEl.classList.contains("hidden")) return;
+  loadingEl.classList.add("hidden");
+  setTimeout(() => loadingEl.remove(), 800);
+}
+
+const loadingFallback = setTimeout(hideLoading, 15000);
+
 (async () => {
-  await loadForest();
-  instance.refresh();
-  if (loadingEl) {
-    loadingEl.classList.add("hidden");
-    setTimeout(() => loadingEl.remove(), 800);
+  try {
+    await loadForest();
+    instance.refresh();
+  } catch (err) {
+    console.error("initial load failed", err);
+  } finally {
+    clearTimeout(loadingFallback);
+    hideLoading();
   }
 })();
