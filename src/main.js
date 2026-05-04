@@ -256,10 +256,13 @@ const sketch = (p) => {
     state.drag.active = false;
   };
 
-  // Disable p5's touch->mouse forwarding; we handle touch ourselves.
-  p.touchStarted = () => false;
-  p.touchMoved = () => false;
-  p.touchEnded = () => false;
+  // Block default browser touch behavior only on the canvas;
+  // returning false everywhere swallows synthetic clicks on HUD buttons/slider.
+  const isCanvasTouch = (event) =>
+    event && event.target && event.target.tagName === "CANVAS";
+  p.touchStarted = (event) => (isCanvasTouch(event) ? false : undefined);
+  p.touchMoved = (event) => (isCanvasTouch(event) ? false : undefined);
+  p.touchEnded = (event) => (isCanvasTouch(event) ? false : undefined);
 
   p.refresh = () => {
     placeOrbs();
