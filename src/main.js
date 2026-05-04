@@ -445,7 +445,7 @@ function drawIdleHint(p) {
   p.noStroke();
   p.textSize(13);
   p.textAlign(p.CENTER, p.CENTER);
-  p.text("the forest is empty — try reseed", p.width / 2, p.height / 2);
+  p.text("watering...", p.width / 2, p.height / 2);
 }
 
 const instance = new p5(sketch);
