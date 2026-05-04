@@ -10,6 +10,7 @@ const resetViewBtn = document.getElementById("reset-view");
 const boroughEl = document.getElementById("borough");
 const tooltipEl = document.getElementById("tooltip");
 const loadingEl = document.getElementById("loading");
+const bendEl = document.getElementById("bend");
 
 const TREE_COUNT = 500;
 const GROWTH_DURATION_MS = 6500;
@@ -38,6 +39,7 @@ const state = {
   camera: { rotX: 0, rotY: 0, zoom: 1, panX: 0, panY: 0 },
   bendScale: 1.0,
   bendRegen: 1.0,
+  bendManualTarget: 1.0,
   keys: { left: false, right: false },
   drag: { active: false, moved: false, lastX: 0, lastY: 0 },
 };
@@ -181,7 +183,7 @@ const sketch = (p) => {
       return;
     }
 
-    let bendTarget = state.bendScale;
+    let bendTarget = state.bendManualTarget;
     if (state.keys.left && !state.keys.right) bendTarget = BEND_MIN;
     else if (state.keys.right && !state.keys.left) bendTarget = BEND_MAX;
     state.bendScale += (bendTarget - state.bendScale) * BEND_EASE;
@@ -651,7 +653,19 @@ window.addEventListener("keydown", (e) => {
 window.addEventListener("keyup", (e) => {
   if (e.key === "ArrowLeft") state.keys.left = false;
   else if (e.key === "ArrowRight") state.keys.right = false;
+  if (!state.keys.left && !state.keys.right) {
+    state.bendManualTarget = state.bendScale;
+    if (bendEl) bendEl.value = String(state.bendScale);
+  }
 });
+
+if (bendEl) {
+  bendEl.addEventListener("input", (e) => {
+    const v = parseFloat(e.target.value);
+    if (!Number.isFinite(v)) return;
+    state.bendManualTarget = v;
+  });
+}
 
 function hideLoading() {
   if (!loadingEl || loadingEl.classList.contains("hidden")) return;
