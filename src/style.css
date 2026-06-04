@@ -1,9 +1,26 @@
+@font-face {
+  font-family: "Nudica Mono";
+  src: url("./fonts/nudicamono-medium-webfont.woff2") format("woff2"),
+    url("./fonts/nudicamono-medium-webfont.woff") format("woff"),
+    url("./fonts/nudicamono-medium-webfont.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --bg: #2d2d2d;
   --fg: #f9f9f9;
   --muted: #99a9c1;
   --accent: #0066ff;
-  --panel: rgba(12, 15, 10, 0.78);
+  /* Frosted glass: a faint tint so the blurred scene reads through it, a
+     bright translucent edge, a saturated blur, and a soft shadow + inner
+     highlight for the lifted-pane depth. */
+  --panel: rgba(28, 32, 38, 0.28);
+  --panel-border: rgba(255, 255, 255, 0.16);
+  --panel-blur: saturate(170%) blur(18px);
+  --panel-shadow: 0 8px 32px rgba(0, 0, 0, 0.36),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
 }
 
 * {
@@ -17,7 +34,7 @@ body {
   height: 100%;
   background: var(--bg);
   color: var(--fg);
-  font-family: "Victor Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: "Nudica Mono", ui-monospace, "SF Mono", Menlo, monospace;
   overflow: hidden;
 }
 
@@ -57,10 +74,12 @@ body {
 
 #status {
   background: var(--panel);
-  border: 1px solid rgba(232, 226, 207, 0.12);
+  border: 1px solid var(--panel-border);
   padding: 8px 12px;
-  border-radius: 2px;
-  backdrop-filter: blur(8px);
+  border-radius: 10px;
+  backdrop-filter: var(--panel-blur);
+  -webkit-backdrop-filter: var(--panel-blur);
+  box-shadow: var(--panel-shadow);
 }
 
 #controls {
@@ -73,34 +92,119 @@ body {
 #controls select {
   background: var(--panel);
   color: var(--fg);
-  border: 1px solid rgba(232, 226, 207, 0.18);
+  border: 1px solid var(--panel-border);
   padding: 8px 12px;
-  border-radius: 2px;
+  border-radius: 10px;
   font: inherit;
   letter-spacing: 0.08em;
   text-transform: lowercase;
   cursor: pointer;
-  backdrop-filter: blur(8px);
+  backdrop-filter: var(--panel-blur);
+  -webkit-backdrop-filter: var(--panel-blur);
+  box-shadow: var(--panel-shadow);
+  transition: border-color 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Custom frosted dropdown: drop the native chrome and draw our own caret so
+   the control reads as the same glass pane as the buttons. */
+#controls select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 30px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 15px) center, calc(100% - 10px) center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  transition: border-color 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Best-effort styling for the popup list (honored by Blink/Chromium). */
+#controls select option {
+  background: rgba(18, 22, 28, 0.96);
+  color: var(--fg);
 }
 
 #controls button:hover,
 #controls select:hover {
-  border-color: var(--accent);
+  border-color: rgba(120, 170, 255, 0.55);
   color: var(--accent);
+  background-color: rgba(0, 102, 255, 0.14);
+  transform: translateY(-1.5px);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.42),
+    0 0 16px rgba(0, 102, 255, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.26);
 }
 
-.bend-control {
+#controls button:active,
+#controls select:active {
+  transform: translateY(0) scale(0.97);
+  background-color: rgba(0, 102, 255, 0.2);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4),
+    inset 0 2px 8px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  transition-duration: 90ms;
+}
+
+#controls button:focus-visible,
+#controls select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4),
+    0 0 0 2px rgba(0, 102, 255, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.bend-control,
+.count-control {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   background: var(--panel);
-  border: 1px solid rgba(232, 226, 207, 0.18);
+  border: 1px solid var(--panel-border);
   padding: 6px 12px;
-  border-radius: 2px;
-  backdrop-filter: blur(8px);
+  border-radius: 10px;
+  backdrop-filter: var(--panel-blur);
+  -webkit-backdrop-filter: var(--panel-blur);
+  box-shadow: var(--panel-shadow);
   color: var(--muted);
   letter-spacing: 0.08em;
   text-transform: lowercase;
+  transition: border-color 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.count-control:focus-within {
+  border-color: rgba(120, 170, 255, 0.55);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.42),
+    0 0 16px rgba(0, 102, 255, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.26);
+}
+
+#tree-count {
+  width: 3.4em;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--fg);
+  font: inherit;
+  letter-spacing: 0.08em;
+  text-align: right;
+  -moz-appearance: textfield;
+}
+
+#tree-count::-webkit-inner-spin-button,
+#tree-count::-webkit-outer-spin-button {
+  opacity: 0.6;
+  height: 18px;
 }
 
 #bend {
@@ -139,13 +243,15 @@ body {
   z-index: 20;
   pointer-events: none;
   background: var(--panel);
-  border: 1px solid rgba(232, 226, 207, 0.18);
+  border: 1px solid var(--panel-border);
   padding: 8px 10px;
-  border-radius: 2px;
+  border-radius: 10px;
   font-size: 11px;
   line-height: 1.5;
   letter-spacing: 0.04em;
-  backdrop-filter: blur(8px);
+  backdrop-filter: var(--panel-blur);
+  -webkit-backdrop-filter: var(--panel-blur);
+  box-shadow: var(--panel-shadow);
   max-width: 220px;
   transform: translate(12px, 12px);
 }
@@ -253,11 +359,16 @@ body {
     padding: 10px 12px;
     font-size: 12px;
   }
-  .bend-control {
+  .bend-control,
+  .count-control {
     flex: 1 1 100%;
     justify-content: space-between;
     min-height: 44px;
     padding: 8px 14px;
+  }
+  #tree-count {
+    width: 4.5em;
+    font-size: 14px;
   }
   #bend {
     flex: 1;

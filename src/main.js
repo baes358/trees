@@ -1,7 +1,8 @@
 import p5 from "p5";
-import { fetchTrees, randomOffset } from "./data.js";
+import { fetchTrees, randomStartId } from "./data.js";
 import { generateSkeleton, PIXEL } from "./skeleton.js";
 import { orbPalette, BRANCH_COLOR, BRANCH_HALO } from "./palette.js";
+import { createBackground } from "./background.js";
 
 const statusEl = document.getElementById("status");
 const reseedBtn = document.getElementById("reseed");
@@ -11,8 +12,11 @@ const boroughEl = document.getElementById("borough");
 const tooltipEl = document.getElementById("tooltip");
 const loadingEl = document.getElementById("loading");
 const bendEl = document.getElementById("bend");
+const treeCountEl = document.getElementById("tree-count");
 
 const TREE_COUNT = 500;
+const TREE_COUNT_MIN = 250;
+const TREE_COUNT_MAX = 999;
 const GROWTH_DURATION_MS = 6500;
 const FRONT_WINDOW = 60;
 const HOVER_RADIUS = 180;
@@ -32,10 +36,12 @@ const state = {
   loading: false,
   borough: "",
   hover: null,
+  treeCount: TREE_COUNT,
   startTime: 0,
   cursorX: -1e6,
   cursorY: -1e6,
   cursorActive: false,
+  front: 0,
   camera: { rotX: 0, rotY: 0, zoom: 1, panX: 0, panY: 0 },
   bendScale: 1.0,
   bendRegen: 1.0,
@@ -80,12 +86,12 @@ async function loadForest() {
   setStatus("fetching trees…");
   try {
     let trees = await fetchTrees({
-      limit: TREE_COUNT,
-      offset: randomOffset(),
+      limit: state.treeCount,
+      startId: randomStartId(),
       borough: state.borough,
     });
     if (trees.length < 50) {
-      trees = await fetchTrees({ limit: TREE_COUNT, offset: 0, borough: state.borough });
+      trees = await fetchTrees({ limit: state.treeCount, startId: 0, borough: state.borough });
     }
     state.trees = trees;
     setStatus(`${trees.length} TREES · ${state.borough || "ALL BOROUGHS"}`);
@@ -152,7 +158,7 @@ function pseudoRand(seed) {
 }
 
 const sketch = (p) => {
-  let bgLayer;
+  let bg = null;
   let lastWidth = 0;
 
   p.setup = () => {
@@ -176,7 +182,7 @@ const sketch = (p) => {
   };
 
   p.draw = () => {
-    if (bgLayer) p.image(bgLayer, 0, 0);
+    if (bg) bg.render(p, performance.now());
 
     if (!state.skeleton || !state.orbs.length) {
       drawIdleHint(p);
@@ -202,6 +208,7 @@ const sketch = (p) => {
     const elapsed = now - state.startTime;
     const progress = p.constrain(elapsed / GROWTH_DURATION_MS, 0, 1);
     const front = progress * state.skeleton.maxOrd;
+    state.front = front;
     const trig = frameTrig(state.camera);
     const sk = state.skeleton;
 
@@ -269,7 +276,7 @@ const sketch = (p) => {
   };
 
   function rebuildLayers(p) {
-    bgLayer = makeBackground(p);
+    bg = createBackground(p);
     state.skeleton = generateSkeleton({
       width: p.width,
       height: p.height,
@@ -362,42 +369,6 @@ function drawOrbsFront(p, orbs, front, maxOrd, time, trig, sk) {
   }
 }
 
-function makeBackground(p) {
-  const g = p.createGraphics(p.width, p.height);
-  g.colorMode(p.HSB, 360, 100, 100, 100);
-  g.noStroke();
-
-  const top = g.color(220, 30, 6);
-  const mid = g.color(200, 22, 10);
-  const horizon = g.color(160, 18, 8);
-  const ground = g.color(140, 14, 4);
-  const horizonY = p.height * 0.88;
-
-  for (let y = 0; y < horizonY; y++) {
-    const t = y / horizonY;
-    const c = g.lerpColor(top, mid, Math.pow(t, 0.7));
-    const c2 = t > 0.7 ? g.lerpColor(c, horizon, (t - 0.7) / 0.3) : c;
-    g.stroke(c2);
-    g.line(0, y, p.width, y);
-  }
-  for (let y = horizonY; y < p.height; y++) {
-    const t = (y - horizonY) / (p.height - horizonY);
-    const c = g.lerpColor(horizon, ground, Math.pow(t, 0.6));
-    g.stroke(c);
-    g.line(0, y, p.width, y);
-  }
-
-  g.noStroke();
-  for (let i = 0; i < 220; i++) {
-    const y = horizonY + Math.random() * (p.height - horizonY);
-    const x = Math.random() * p.width;
-    g.fill(150, 12, 12, 28);
-    g.rect(x, y, 2, 1);
-  }
-
-  return g;
-}
-
 function pickOrb(mx, my) {
   if (!state.skeleton) return null;
   const trig = frameTrig(state.camera);
@@ -405,6 +376,9 @@ function pickOrb(mx, my) {
   let best = null;
   let bestDist = 18;
   for (const orb of state.orbs) {
+    // Only orbs the growth front has already revealed are pickable, so the
+    // tooltip never appears for an orb that isn't drawn yet.
+    if (orb.ord > state.front) continue;
     const pr = project(orb.x, orb.y, orb.z || 0, trig, sk.baseX, sk.baseY, state.camera);
     const dx = mx - pr.sx;
     const dy = my - pr.sy;
@@ -667,6 +641,31 @@ if (bendEl) {
     const v = parseFloat(e.target.value);
     if (!Number.isFinite(v)) return;
     state.bendManualTarget = v;
+  });
+}
+
+if (treeCountEl) {
+  treeCountEl.min = String(TREE_COUNT_MIN);
+  treeCountEl.max = String(TREE_COUNT_MAX);
+  treeCountEl.value = String(state.treeCount);
+
+  // Commit on change/blur (not every keystroke) so a refetch only fires once
+  // the user has settled on a value. Clamp to the allowed range first.
+  const commitCount = async () => {
+    const raw = parseInt(treeCountEl.value, 10);
+    const clamped = Number.isFinite(raw)
+      ? Math.max(TREE_COUNT_MIN, Math.min(TREE_COUNT_MAX, raw))
+      : state.treeCount;
+    treeCountEl.value = String(clamped);
+    if (clamped === state.treeCount) return;
+    state.treeCount = clamped;
+    await loadForest();
+    instance.refresh();
+  };
+
+  treeCountEl.addEventListener("change", commitCount);
+  treeCountEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") treeCountEl.blur();
   });
 }
 
