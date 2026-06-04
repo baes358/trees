@@ -1,8 +1,9 @@
 import p5 from "p5";
 import { fetchTrees, randomStartId } from "./data.js";
-import { generateSkeleton, PIXEL } from "./skeleton.js";
-import { orbPalette, BRANCH_COLOR, BRANCH_HALO } from "./palette.js";
+import { generateSkeleton, randomTreeForm, PIXEL } from "./skeleton.js";
+import { orbPalette, boroughColor, BRANCH_COLOR, BRANCH_HALO } from "./palette.js";
 import { createBackground } from "./background.js";
+import { startSeedLoader } from "./loader.js";
 
 const statusEl = document.getElementById("status");
 const reseedBtn = document.getElementById("reseed");
@@ -33,6 +34,7 @@ const state = {
   orbs: [],
   skeleton: null,
   skeletonSeed: 13,
+  skeletonForm: randomTreeForm(),
   loading: false,
   borough: "",
   hover: null,
@@ -94,7 +96,11 @@ async function loadForest() {
       trees = await fetchTrees({ limit: state.treeCount, startId: 0, borough: state.borough });
     }
     state.trees = trees;
-    setStatus(`${trees.length} TREES · ${state.borough || "ALL BOROUGHS"}`);
+    const location = state.borough ? state.borough.toUpperCase() : "NEW YORK CITY";
+    // Tint the location to match the borough's tree-particle color. Values come
+    // from a fixed select list + generated date, so innerHTML is safe here.
+    statusEl.innerHTML =
+      `TREES IN <span style="color:${boroughColor(state.borough)}">${location}</span>, ${formatToday()}`;
   } catch (err) {
     console.error(err);
     setStatus(`error: ${err.message}`);
@@ -105,6 +111,14 @@ async function loadForest() {
 
 function setStatus(text) {
   statusEl.textContent = text;
+}
+
+function formatToday() {
+  return new Date().toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
 }
 
 function placeOrbs() {
@@ -157,19 +171,41 @@ function pseudoRand(seed) {
   return x - Math.floor(x);
 }
 
+// High-DPI rendering keeps the fine dots crisp, but it quadruples fragment work.
+// Above this many trees, fall back to 1× so a dense forest stays smooth.
+const HIDPI_TREE_LIMIT = 650;
+function densityForCount(count) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  return count > HIDPI_TREE_LIMIT ? 1 : dpr;
+}
+
 const sketch = (p) => {
   let bg = null;
   let lastWidth = 0;
+  let currentDensity = 0;
 
   p.setup = () => {
     const host = document.getElementById("canvas-host");
     const c = p.createCanvas(window.innerWidth, window.innerHeight);
     c.parent(host);
     p.colorMode(p.HSB, 360, 100, 100, 100);
-    p.pixelDensity(1);
+    currentDensity = densityForCount(state.treeCount);
+    p.pixelDensity(currentDensity);
     p.frameRate(45);
     lastWidth = p.width;
     rebuildLayers(p);
+  };
+
+  // Re-apply the resolution tier when the tree count changes. Resizing the
+  // canvas to its current size forces p5 to rebuild the buffer at the new density.
+  p.refreshDensity = () => {
+    const d = densityForCount(state.treeCount);
+    if (d === currentDensity) return;
+    currentDensity = d;
+    p.pixelDensity(d);
+    p.resizeCanvas(p.width, p.height);
+    rebuildLayers(p);
+    placeOrbs();
   };
 
   p.windowResized = () => {
@@ -199,6 +235,7 @@ const sketch = (p) => {
         height: p.height,
         seed: state.skeletonSeed,
         bendScale: state.bendScale,
+        form: state.skeletonForm,
       });
       syncOrbsToCandidates();
       state.bendRegen = state.bendScale;
@@ -282,17 +319,20 @@ const sketch = (p) => {
       height: p.height,
       seed: state.skeletonSeed,
       bendScale: state.bendScale,
+      form: state.skeletonForm,
     });
     state.bendRegen = state.bendScale;
   }
 
-  p.regenerateShape = () => {
+  p.regenerateShape = (form) => {
     state.skeletonSeed = Math.floor(Math.random() * 100000);
+    state.skeletonForm = form || randomTreeForm();
     state.skeleton = generateSkeleton({
       width: p.width,
       height: p.height,
       seed: state.skeletonSeed,
       bendScale: state.bendScale,
+      form: state.skeletonForm,
     });
     state.bendRegen = state.bendScale;
     placeOrbs();
@@ -329,14 +369,15 @@ function drawBranchFront(p, points, front, maxOrd, time, trig, sk) {
 
     const sway = worldSway(pt.x, pt.y, pt.ord, maxOrd, time);
     const pr = project(pt.x + sway.dx, pt.y + sway.dy, pt.z || 0, trig, sk.baseX, sk.baseY, state.camera);
-    const w = Math.max(1, (pt.w || PIXEL) * pr.scale);
+    // Thin, clamped dots: even the trunk reads as a fine dotted line.
+    const w = Math.max(0.7, Math.min(2.4, (pt.w || PIXEL) * pr.scale * 0.5));
 
     if (isFront) {
-      p.fill(BRANCH_HALO.h, BRANCH_HALO.s, BRANCH_HALO.b, 14);
-      p.rect(pr.sx - w, pr.sy - w, w * 3, w * 3);
+      p.fill(BRANCH_HALO.h, BRANCH_HALO.s, BRANCH_HALO.b, 10);
+      p.circle(pr.sx, pr.sy, w * 3);
     }
-    p.fill(BRANCH_COLOR.h, BRANCH_COLOR.s, BRANCH_COLOR.b, isFront ? 96 : 72);
-    p.rect(pr.sx, pr.sy, w, w);
+    p.fill(BRANCH_COLOR.h, BRANCH_COLOR.s, BRANCH_COLOR.b, isFront ? 94 : 66);
+    p.circle(pr.sx, pr.sy, w);
   }
 }
 
@@ -355,17 +396,14 @@ function drawOrbsFront(p, orbs, front, maxOrd, time, trig, sk) {
     const y = pr.sy + push.dy;
 
     const pulse = 0.92 + 0.08 * Math.sin(time * 0.0016 + orb.x * 0.013);
-    const baseAlpha = isFront ? 100 : 90;
-    const px = Math.max(1, PIXEL * pr.scale);
+    const baseAlpha = isFront ? 100 : 88;
+    const coreSize = Math.max(1.1, (1.4 + orb.sizeT * 1.8) * pr.scale);
 
-    p.fill(halo.h, halo.s, halo.b, isFront ? 22 : 12);
-    p.rect(x - px * 2, y - px * 2, px * 5, px * 5);
-    p.fill(halo.h, halo.s, halo.b, isFront ? 40 : 22);
-    p.rect(x - px, y - px, px * 3, px * 3);
-
-    const coreSize = Math.max(1, (PIXEL + Math.round(orb.sizeT * 2)) * pr.scale);
+    // One soft halo + a crisp small core — clean point of light, not a blob.
+    p.fill(halo.h, halo.s, halo.b, isFront ? 18 : 9);
+    p.circle(x, y, coreSize * 3.2);
     p.fill(core.h, core.s, core.b, baseAlpha * pulse);
-    p.rect(x, y, coreSize, coreSize);
+    p.circle(x, y, coreSize);
   }
 }
 
@@ -659,6 +697,7 @@ if (treeCountEl) {
     treeCountEl.value = String(clamped);
     if (clamped === state.treeCount) return;
     state.treeCount = clamped;
+    instance.refreshDensity(); // step resolution up/down for the new load
     await loadForest();
     instance.refresh();
   };
@@ -669,10 +708,15 @@ if (treeCountEl) {
   });
 }
 
+const stopSeedLoader = startSeedLoader(document.querySelector(".seed-canvas"));
+
 function hideLoading() {
   if (!loadingEl || loadingEl.classList.contains("hidden")) return;
   loadingEl.classList.add("hidden");
-  setTimeout(() => loadingEl.remove(), 800);
+  setTimeout(() => {
+    stopSeedLoader();
+    loadingEl.remove();
+  }, 800);
 }
 
 const loadingFallback = setTimeout(hideLoading, 15000);

@@ -12,6 +12,12 @@ const HEALTH_VIGOR = {
   poor: 0.35,
 };
 
+// CSS color matching the particle tint for a borough ("" = all boroughs / NYC).
+export function boroughColor(borough) {
+  const tint = BOROUGH_TINT[borough] || { h: 160 };
+  return `hsl(${tint.h}, 75%, 65%)`;
+}
+
 export function orbPalette(tree) {
   const tint = BOROUGH_TINT[tree.borough] || { h: 160 };
   const dead = tree.status !== "Alive";
@@ -28,8 +34,8 @@ export function orbPalette(tree) {
   };
 }
 
-export const BRANCH_COLOR = { h: 168, s: 14, b: 56 };
-export const BRANCH_HALO = { h: 178, s: 50, b: 92 };
+export const BRANCH_COLOR = { h: 170, s: 8, b: 66 };
+export const BRANCH_HALO = { h: 178, s: 40, b: 94 };
 
 const SPECIES_HASH = new Map();
 export function hashSpecies(name) {
