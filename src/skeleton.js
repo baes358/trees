@@ -75,7 +75,7 @@ const FORMS = {
   fir: {
     growth: "excurrent",
     trunkLenFactor: 0.6,
-    trunkWidthFactor: 0.012,
+    trunkWidthFactor: 0.018,
     crownStart: 0.05,
     whorls: 17,
     perWhorl: 6,
@@ -91,7 +91,7 @@ const FORMS = {
   columnar: {
     growth: "excurrent",
     trunkLenFactor: 0.67,
-    trunkWidthFactor: 0.011,
+    trunkWidthFactor: 0.016,
     crownStart: 0.05,
     whorls: 23,
     perWhorl: 6,
@@ -107,7 +107,7 @@ const FORMS = {
   pine: {
     growth: "excurrent",
     trunkLenFactor: 0.66,
-    trunkWidthFactor: 0.018,
+    trunkWidthFactor: 0.026,
     crownStart: 0.58,
     whorls: 7,
     perWhorl: 5,
@@ -123,7 +123,7 @@ const FORMS = {
   spruce: {
     growth: "excurrent",
     trunkLenFactor: 0.56,
-    trunkWidthFactor: 0.013,
+    trunkWidthFactor: 0.019,
     crownStart: 0.03,
     whorls: 18,
     perWhorl: 7,
@@ -300,7 +300,7 @@ function generateDecurrent({ width, height, seed, bendScale }) {
   const baseX = width / 2;
   const baseY = height * 0.92;
   const trunkLen = height * 0.22;
-  const trunkWidth = Math.max(8, Math.round(height * 0.014));
+  const trunkWidth = Math.max(12, Math.round(height * 0.02));
 
   let maxOrd = 0;
 

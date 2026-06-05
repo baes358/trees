@@ -44,7 +44,12 @@ const state = {
   cursorY: -1e6,
   cursorActive: false,
   front: 0,
+  // `camera` is what gets rendered; `cameraTarget` is what interactions set.
+  // Each frame the rendered camera eases toward the target, so wheel/drag/pinch
+  // input glides instead of snapping. `camVel` carries flick momentum.
   camera: { rotX: 0, rotY: 0, zoom: 1, panX: 0, panY: 0 },
+  cameraTarget: { rotX: 0, rotY: 0, zoom: 1, panX: 0, panY: 0 },
+  camVel: { panX: 0, panY: 0, rotX: 0, rotY: 0 },
   bendScale: 1.0,
   bendRegen: 1.0,
   bendManualTarget: 1.0,
@@ -55,6 +60,45 @@ const state = {
 const FOCAL = 1100;
 const ROT_PER_PIXEL = 0.005;
 const TILT_LIMIT = Math.PI / 3;
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 8;
+const CAM_EASE = 0.2; // base per-frame approach toward target (scaled by frame time)
+const INERTIA_DECAY = 0.9; // flick momentum falloff per frame
+
+const clampZoom = (z) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+const clampTilt = (r) => Math.max(-TILT_LIMIT, Math.min(TILT_LIMIT, r));
+
+// Frame-rate-independent easing: ease toward target as if CAM_EASE were tuned
+// for 60fps, so motion feels identical regardless of the actual frame rate.
+function easeCamera(dtMs) {
+  const cam = state.camera;
+  const tgt = state.cameraTarget;
+  const vel = state.camVel;
+  const dragging = state.drag.active;
+
+  // Apply flick momentum to the target while not actively dragging.
+  if (!dragging) {
+    if (Math.abs(vel.panX) > 0.01 || Math.abs(vel.panY) > 0.01) {
+      tgt.panX += vel.panX;
+      tgt.panY += vel.panY;
+      vel.panX *= INERTIA_DECAY;
+      vel.panY *= INERTIA_DECAY;
+    }
+    if (Math.abs(vel.rotX) > 1e-5 || Math.abs(vel.rotY) > 1e-5) {
+      tgt.rotX = clampTilt(tgt.rotX + vel.rotX);
+      tgt.rotY += vel.rotY;
+      vel.rotX *= INERTIA_DECAY;
+      vel.rotY *= INERTIA_DECAY;
+    }
+  }
+
+  const k = Math.min(1, 1 - Math.pow(1 - CAM_EASE, dtMs / 16.67));
+  cam.rotX += (tgt.rotX - cam.rotX) * k;
+  cam.rotY += (tgt.rotY - cam.rotY) * k;
+  cam.zoom += (tgt.zoom - cam.zoom) * k;
+  cam.panX += (tgt.panX - cam.panX) * k;
+  cam.panY += (tgt.panY - cam.panY) * k;
+}
 
 function frameTrig(cam) {
   return {
@@ -241,6 +285,8 @@ const sketch = (p) => {
       state.bendRegen = state.bendScale;
     }
 
+    easeCamera(p.deltaTime || 16.67);
+
     const now = performance.now();
     const elapsed = now - state.startTime;
     const progress = p.constrain(elapsed / GROWTH_DURATION_MS, 0, 1);
@@ -273,6 +319,8 @@ const sketch = (p) => {
     state.drag.moved = false;
     state.drag.lastX = p.mouseX;
     state.drag.lastY = p.mouseY;
+    state.camVel.panX = 0; // grabbing kills any leftover momentum
+    state.camVel.panY = 0;
     state.hover = null;
     tooltipEl.hidden = true;
   };
@@ -284,8 +332,11 @@ const sketch = (p) => {
       state.drag.lastX = p.mouseX;
       state.drag.lastY = p.mouseY;
       if (dx || dy) {
-        state.camera.panX += dx;
-        state.camera.panY += dy;
+        state.cameraTarget.panX += dx;
+        state.cameraTarget.panY += dy;
+        // Keep recent velocity for a flick-to-coast release.
+        state.camVel.panX = dx;
+        state.camVel.panY = dy;
         state.drag.moved = true;
       }
       state.cursorActive = false;
@@ -369,8 +420,9 @@ function drawBranchFront(p, points, front, maxOrd, time, trig, sk) {
 
     const sway = worldSway(pt.x, pt.y, pt.ord, maxOrd, time);
     const pr = project(pt.x + sway.dx, pt.y + sway.dy, pt.z || 0, trig, sk.baseX, sk.baseY, state.camera);
-    // Thin, clamped dots: even the trunk reads as a fine dotted line.
-    const w = Math.max(0.7, Math.min(2.4, (pt.w || PIXEL) * pr.scale * 0.5));
+    // Preserve the trunk→twig width gradient: a prominent thick trunk that
+    // tapers down to fine dotted twigs (high cap, low floor).
+    const w = Math.max(0.7, Math.min(9, (pt.w || PIXEL) * pr.scale * 0.6));
 
     if (isFront) {
       p.fill(BRANCH_HALO.h, BRANCH_HALO.s, BRANCH_HALO.b, 10);
@@ -491,13 +543,10 @@ canvasHost.addEventListener(
 
     if (e.ctrlKey || e.metaKey) {
       const factor = Math.exp(-e.deltaY * 0.012);
-      state.camera.zoom = Math.max(0.25, Math.min(8, state.camera.zoom * factor));
+      state.cameraTarget.zoom = clampZoom(state.cameraTarget.zoom * factor);
     } else {
-      state.camera.rotY += e.deltaX * ROT_PER_PIXEL;
-      state.camera.rotX = Math.max(
-        -TILT_LIMIT,
-        Math.min(TILT_LIMIT, state.camera.rotX + e.deltaY * ROT_PER_PIXEL)
-      );
+      state.cameraTarget.rotY += e.deltaX * ROT_PER_PIXEL;
+      state.cameraTarget.rotX = clampTilt(state.cameraTarget.rotX + e.deltaY * ROT_PER_PIXEL);
     }
   },
   { passive: false }
@@ -538,6 +587,10 @@ canvasHost.addEventListener(
       touchState.pointers.set(t.identifier, localTouchPoint(t));
     }
     const n = touchState.pointers.size;
+    state.camVel.panX = 0; // a new touch kills leftover momentum
+    state.camVel.panY = 0;
+    state.camVel.rotX = 0;
+    state.camVel.rotY = 0;
     if (n === 1) {
       const [p] = touchState.pointers.values();
       touchState.mode = "one";
@@ -565,8 +618,12 @@ canvasHost.addEventListener(
       const prev = touchState.pointers.get(t.identifier);
       const cur = localTouchPoint(t);
       if (touchState.mode === "one") {
-        state.camera.panX += cur.x - prev.x;
-        state.camera.panY += cur.y - prev.y;
+        const dpx = cur.x - prev.x;
+        const dpy = cur.y - prev.y;
+        state.cameraTarget.panX += dpx;
+        state.cameraTarget.panY += dpy;
+        state.camVel.panX = dpx;
+        state.camVel.panY = dpy;
         if (Math.hypot(cur.x - touchState.tapX, cur.y - touchState.tapY) > 10) {
           touchState.tapMoved = true;
         }
@@ -583,15 +640,16 @@ canvasHost.addEventListener(
         const cy = (pts[0].y + pts[1].y) / 2;
         if (touchState.lastDist > 0) {
           const factor = dist / touchState.lastDist;
-          state.camera.zoom = Math.max(0.25, Math.min(8, state.camera.zoom * factor));
+          state.cameraTarget.zoom = clampZoom(state.cameraTarget.zoom * factor);
         }
         const ddx = cx - touchState.lastCx;
         const ddy = cy - touchState.lastCy;
-        state.camera.rotY += ddx * ROT_PER_PIXEL * 0.6;
-        state.camera.rotX = Math.max(
-          -TILT_LIMIT,
-          Math.min(TILT_LIMIT, state.camera.rotX + ddy * ROT_PER_PIXEL * 0.6)
-        );
+        const drY = ddx * ROT_PER_PIXEL * 0.6;
+        const drX = ddy * ROT_PER_PIXEL * 0.6;
+        state.cameraTarget.rotY += drY;
+        state.cameraTarget.rotX = clampTilt(state.cameraTarget.rotX + drX);
+        state.camVel.rotX = drX;
+        state.camVel.rotY = drY;
         touchState.lastDist = dist;
         touchState.lastCx = cx;
         touchState.lastCy = cy;
@@ -640,11 +698,16 @@ canvasHost.addEventListener("touchend", endTouch, { passive: false });
 canvasHost.addEventListener("touchcancel", endTouch, { passive: false });
 
 resetViewBtn.addEventListener("click", () => {
-  state.camera.rotX = 0;
-  state.camera.rotY = 0;
-  state.camera.zoom = 1;
-  state.camera.panX = 0;
-  state.camera.panY = 0;
+  // Ease back to the default view instead of snapping.
+  state.cameraTarget.rotX = 0;
+  state.cameraTarget.rotY = 0;
+  state.cameraTarget.zoom = 1;
+  state.cameraTarget.panX = 0;
+  state.cameraTarget.panY = 0;
+  state.camVel.panX = 0;
+  state.camVel.panY = 0;
+  state.camVel.rotX = 0;
+  state.camVel.rotY = 0;
 });
 
 function isFormFocused() {
