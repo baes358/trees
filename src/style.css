@@ -317,7 +317,54 @@ body {
   height: 180px;
 }
 
+#hud-toggle {
+  display: none;
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 11;
+  width: 48px;
+  height: 48px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 50%;
+  backdrop-filter: var(--panel-blur);
+  -webkit-backdrop-filter: var(--panel-blur);
+  box-shadow: var(--panel-shadow);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#hud-toggle svg {
+  width: 22px;
+  height: 22px;
+}
+
+#hud-toggle .icon-eye-off {
+  display: none;
+}
+
+/* When the HUD is hidden, swap to the eye-off icon. */
+body.hud-hidden #hud {
+  display: none;
+}
+
+body.hud-hidden #hud-toggle .icon-eye {
+  display: none;
+}
+
+body.hud-hidden #hud-toggle .icon-eye-off {
+  display: block;
+}
+
 @media (max-width: 640px) {
+  #hud-toggle {
+    display: flex;
+  }
   #hud {
     flex-direction: column;
     align-items: stretch;

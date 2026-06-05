@@ -14,6 +14,13 @@ const tooltipEl = document.getElementById("tooltip");
 const loadingEl = document.getElementById("loading");
 const bendEl = document.getElementById("bend");
 const treeCountEl = document.getElementById("tree-count");
+const hudToggleBtn = document.getElementById("hud-toggle");
+
+hudToggleBtn.addEventListener("click", () => {
+  const hidden = document.body.classList.toggle("hud-hidden");
+  hudToggleBtn.setAttribute("aria-pressed", String(hidden));
+  hudToggleBtn.setAttribute("aria-label", hidden ? "Show controls" : "Hide controls");
+});
 
 const TREE_COUNT = 500;
 const TREE_COUNT_MIN = 250;
@@ -618,8 +625,9 @@ canvasHost.addEventListener(
       const prev = touchState.pointers.get(t.identifier);
       const cur = localTouchPoint(t);
       if (touchState.mode === "one") {
-        const dpx = cur.x - prev.x;
-        const dpy = cur.y - prev.y;
+        // Inverted drag on touch: dragging moves the scene the opposite way.
+        const dpx = -(cur.x - prev.x);
+        const dpy = -(cur.y - prev.y);
         state.cameraTarget.panX += dpx;
         state.cameraTarget.panY += dpy;
         state.camVel.panX = dpx;
