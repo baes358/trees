@@ -112,13 +112,27 @@ function makeCpuBackground(p) {
 // Returns a background controller with a render(p, timeMs) method. Internally
 // prefers the GLSL shader; on any compile/runtime failure it transparently
 // drops to the CPU gradient for the rest of the session.
+// The gradient is smooth and drifts slowly, so it costs nothing visually to
+// render it at half resolution (a quarter of the fragments) and to refresh the
+// shader only a few times a second, blitting the cached layer in between. This
+// turns a full-res per-frame full-screen shader — the single heaviest GPU cost
+// — into a cheap stretched blit on most frames.
+const BG_SCALE = 0.5;
+const BG_REFRESH_MS = 1000 / 24;
+
 export function createBackground(p) {
   let layer = null;
   let shader = null;
   let cpu = null;
+  let lastRender = -1e9;
+
+  const lw = Math.max(1, Math.round(p.width * BG_SCALE));
+  const lh = Math.max(1, Math.round(p.height * BG_SCALE));
 
   try {
-    layer = p.createGraphics(p.width, p.height, p.WEBGL);
+    layer = p.createGraphics(lw, lh, p.WEBGL);
+    // The layer is already downscaled; don't let it re-expand on hi-DPI.
+    layer.pixelDensity(1);
     shader = layer.createShader(BG_VERT, BG_FRAG);
   } catch (err) {
     console.warn("background shader unavailable, using CPU gradient", err);
@@ -131,12 +145,17 @@ export function createBackground(p) {
     render(pp, timeMs) {
       if (layer && shader) {
         try {
-          layer.shader(shader);
-          shader.setUniform("u_resolution", [layer.width, layer.height]);
-          shader.setUniform("u_time", timeMs * 0.001);
-          layer.noStroke();
-          layer.rect(0, 0, layer.width, layer.height);
-          pp.image(layer, 0, 0);
+          // Re-run the shader only every BG_REFRESH_MS; otherwise reuse the
+          // layer's last frame. The blit below still happens every frame.
+          if (timeMs - lastRender >= BG_REFRESH_MS) {
+            layer.shader(shader);
+            shader.setUniform("u_resolution", [layer.width, layer.height]);
+            shader.setUniform("u_time", timeMs * 0.001);
+            layer.noStroke();
+            layer.rect(0, 0, layer.width, layer.height);
+            lastRender = timeMs;
+          }
+          pp.image(layer, 0, 0, pp.width, pp.height);
           return;
         } catch (err) {
           console.warn("background shader render failed, falling back", err);
@@ -145,7 +164,7 @@ export function createBackground(p) {
           cpu = makeCpuBackground(pp);
         }
       }
-      if (cpu) pp.image(cpu, 0, 0);
+      if (cpu) pp.image(cpu, 0, 0, pp.width, pp.height);
     },
   };
 }

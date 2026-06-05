@@ -11,6 +11,7 @@ const newShapeBtn = document.getElementById("new-shape");
 const resetViewBtn = document.getElementById("reset-view");
 const boroughEl = document.getElementById("borough");
 const tooltipEl = document.getElementById("tooltip");
+const toastEl = document.getElementById("toast");
 const loadingEl = document.getElementById("loading");
 const bendEl = document.getElementById("bend");
 const treeCountEl = document.getElementById("tree-count");
@@ -116,23 +117,6 @@ function frameTrig(cam) {
   };
 }
 
-function project(x, y, z, trig, baseX, baseY, cam) {
-  const dx = x - baseX;
-  const dy = y - baseY;
-  const x1 = dx * trig.cosY - z * trig.sinY;
-  const z1 = dx * trig.sinY + z * trig.cosY;
-  const y2 = dy * trig.cosX - z1 * trig.sinX;
-  const z2 = dy * trig.sinX + z1 * trig.cosX;
-  const persp = FOCAL / (FOCAL - z2);
-  const s = persp * cam.zoom;
-  return {
-    sx: baseX + x1 * s + cam.panX,
-    sy: baseY + y2 * s + cam.panY,
-    z: z2,
-    scale: s,
-  };
-}
-
 async function loadForest() {
   if (state.loading) return;
   state.loading = true;
@@ -162,6 +146,54 @@ async function loadForest() {
 
 function setStatus(text) {
   statusEl.textContent = text;
+}
+
+// One-time intro: once the forest finishes growing, surface the interaction
+// hints in a toast, then fade the control panels in behind it.
+let introShown = false;
+
+const isTouchLayout = () =>
+  window.matchMedia("(max-width: 640px)").matches ||
+  ("ontouchstart" in window && navigator.maxTouchPoints > 0);
+
+function runIntro() {
+  if (introShown) return;
+  introShown = true;
+  showHintToast();
+  // Let the toast settle in first, then ease the controls in.
+  setTimeout(() => {
+    document.body.classList.remove("intro-pending");
+  }, 600);
+}
+
+function showHintToast() {
+  const rows = isTouchLayout()
+    ? [
+        ["drag", "pan"],
+        ["pinch", "zoom"],
+        ["two fingers", "rotate"],
+      ]
+    : [
+        ["drag", "pan"],
+        ["⌘ + scroll", "zoom"],
+        ["scroll", "rotate"],
+      ];
+  toastEl.innerHTML =
+    `<div class="toast-title">how to explore</div>` +
+    rows
+      .map(
+        ([gesture, action]) =>
+          `<div class="toast-row"><span class="toast-gesture">${gesture}</span><span class="toast-action">${action}</span></div>`
+      )
+      .join("");
+  toastEl.hidden = false;
+  requestAnimationFrame(() => toastEl.classList.add("show"));
+  setTimeout(() => {
+    toastEl.classList.remove("show");
+    setTimeout(() => {
+      toastEl.hidden = true;
+    }, 500);
+  }, 5200);
 }
 
 function formatToday() {
@@ -242,7 +274,7 @@ const sketch = (p) => {
     p.colorMode(p.HSB, 360, 100, 100, 100);
     currentDensity = densityForCount(state.treeCount);
     p.pixelDensity(currentDensity);
-    p.frameRate(45);
+    p.frameRate(60);
     lastWidth = p.width;
     rebuildLayers(p);
   };
@@ -297,6 +329,7 @@ const sketch = (p) => {
     const now = performance.now();
     const elapsed = now - state.startTime;
     const progress = p.constrain(elapsed / GROWTH_DURATION_MS, 0, 1);
+    if (progress >= 1) runIntro();
     const front = progress * state.skeleton.maxOrd;
     state.front = front;
     const trig = frameTrig(state.camera);
@@ -397,66 +430,105 @@ const sketch = (p) => {
   };
 };
 
-function worldSway(x, y, ord, maxOrd, time) {
-  const swayScale = ord / maxOrd;
+// Per-point sway phase only depends on the point's grid position, so compute it
+// once and cache it on the object. Skeleton regeneration produces fresh point
+// objects, so the cache invalidates itself naturally.
+function swayPhase(x, y) {
   const seed = ((x | 0) * 73856093) ^ ((y | 0) * 19349663);
-  const phase = ((seed >>> 0) % 1000) / 1000 * Math.PI * 2;
-  const dx = Math.sin(time * 0.0011 + phase) * SWAY_AMP * swayScale;
-  const dy = Math.cos(time * 0.0009 + phase * 1.3) * SWAY_AMP * 0.7 * swayScale;
-  return { dx, dy };
+  return (((seed >>> 0) % 1000) / 1000) * Math.PI * 2;
 }
 
-function cursorPushScreen(sx, sy, swayScale) {
-  if (!state.cursorActive) return { dx: 0, dy: 0 };
-  const mdx = sx - state.cursorX;
-  const mdy = sy - state.cursorY;
-  const md2 = mdx * mdx + mdy * mdy;
-  if (md2 >= HOVER_RADIUS * HOVER_RADIUS || md2 <= 0.5) return { dx: 0, dy: 0 };
-  const md = Math.sqrt(md2);
-  const force = (1 - md / HOVER_RADIUS) * HOVER_PUSH * (0.35 + 0.65 * swayScale);
-  return { dx: (mdx / md) * force, dy: (mdy / md) * force };
-}
-
+// The two front-draw loops run over thousands of points every frame, so they're
+// written allocation-free (no per-point helper objects) and with the projection
+// math inlined to keep the per-frame work — and the GC — as low as possible.
 function drawBranchFront(p, points, front, maxOrd, time, trig, sk) {
   p.noStroke();
+  const { cosY, sinY, cosX, sinX } = trig;
+  const cam = state.camera;
+  const baseX = sk.baseX;
+  const baseY = sk.baseY;
   for (let i = 0; i < points.length; i++) {
     const pt = points[i];
     if (pt.ord > front) break;
-    const distFromFront = front - pt.ord;
-    const isFront = distFromFront < FRONT_WINDOW;
+    const isFront = front - pt.ord < FRONT_WINDOW;
 
-    const sway = worldSway(pt.x, pt.y, pt.ord, maxOrd, time);
-    const pr = project(pt.x + sway.dx, pt.y + sway.dy, pt.z || 0, trig, sk.baseX, sk.baseY, state.camera);
+    const swayScale = pt.ord / maxOrd;
+    let phase = pt._phase;
+    if (phase === undefined) phase = pt._phase = swayPhase(pt.x, pt.y);
+    const wx = pt.x + Math.sin(time * 0.0011 + phase) * SWAY_AMP * swayScale;
+    const wy = pt.y + Math.cos(time * 0.0009 + phase * 1.3) * SWAY_AMP * 0.7 * swayScale;
+    const wz = pt.z || 0;
+
+    const dx = wx - baseX;
+    const dy = wy - baseY;
+    const x1 = dx * cosY - wz * sinY;
+    const z1 = dx * sinY + wz * cosY;
+    const y2 = dy * cosX - z1 * sinX;
+    const z2 = dy * sinX + z1 * cosX;
+    const s = (FOCAL / (FOCAL - z2)) * cam.zoom;
+    const sx = baseX + x1 * s + cam.panX;
+    const sy = baseY + y2 * s + cam.panY;
     // Preserve the trunk→twig width gradient: a prominent thick trunk that
     // tapers down to fine dotted twigs (high cap, low floor).
-    const w = Math.max(0.7, Math.min(9, (pt.w || PIXEL) * pr.scale * 0.6));
+    const w = Math.max(0.7, Math.min(9, (pt.w || PIXEL) * s * 0.6));
 
     if (isFront) {
       p.fill(BRANCH_HALO.h, BRANCH_HALO.s, BRANCH_HALO.b, 10);
-      p.circle(pr.sx, pr.sy, w * 3);
+      p.circle(sx, sy, w * 3);
     }
     p.fill(BRANCH_COLOR.h, BRANCH_COLOR.s, BRANCH_COLOR.b, isFront ? 94 : 66);
-    p.circle(pr.sx, pr.sy, w);
+    p.circle(sx, sy, w);
   }
 }
 
 function drawOrbsFront(p, orbs, front, maxOrd, time, trig, sk) {
   p.noStroke();
+  const { cosY, sinY, cosX, sinX } = trig;
+  const cam = state.camera;
+  const baseX = sk.baseX;
+  const baseY = sk.baseY;
+  const cursorActive = state.cursorActive;
+  const cursorX = state.cursorX;
+  const cursorY = state.cursorY;
+  const HOVER_R2 = HOVER_RADIUS * HOVER_RADIUS;
   for (const orb of orbs) {
     if (orb.ord > front) continue;
-    const distFromFront = front - orb.ord;
-    const isFront = distFromFront < FRONT_WINDOW;
+    const isFront = front - orb.ord < FRONT_WINDOW;
     const { core, halo } = orb.palette;
 
-    const sway = worldSway(orb.x, orb.y, orb.ord, maxOrd, time);
-    const pr = project(orb.x + sway.dx, orb.y + sway.dy, orb.z || 0, trig, sk.baseX, sk.baseY, state.camera);
-    const push = cursorPushScreen(pr.sx, pr.sy, orb.ord / maxOrd);
-    const x = pr.sx + push.dx;
-    const y = pr.sy + push.dy;
+    const swayScale = orb.ord / maxOrd;
+    let phase = orb._phase;
+    if (phase === undefined) phase = orb._phase = swayPhase(orb.x, orb.y);
+    const wx = orb.x + Math.sin(time * 0.0011 + phase) * SWAY_AMP * swayScale;
+    const wy = orb.y + Math.cos(time * 0.0009 + phase * 1.3) * SWAY_AMP * 0.7 * swayScale;
+    const wz = orb.z || 0;
+
+    const dx = wx - baseX;
+    const dy = wy - baseY;
+    const x1 = dx * cosY - wz * sinY;
+    const z1 = dx * sinY + wz * cosY;
+    const y2 = dy * cosX - z1 * sinX;
+    const z2 = dy * sinX + z1 * cosX;
+    const s = (FOCAL / (FOCAL - z2)) * cam.zoom;
+    let x = baseX + x1 * s + cam.panX;
+    let y = baseY + y2 * s + cam.panY;
+
+    // Cursor repulsion, inlined (no allocation, squared-distance early-out).
+    if (cursorActive) {
+      const mdx = x - cursorX;
+      const mdy = y - cursorY;
+      const md2 = mdx * mdx + mdy * mdy;
+      if (md2 < HOVER_R2 && md2 > 0.5) {
+        const md = Math.sqrt(md2);
+        const force = (1 - md / HOVER_RADIUS) * HOVER_PUSH * (0.35 + 0.65 * swayScale);
+        x += (mdx / md) * force;
+        y += (mdy / md) * force;
+      }
+    }
 
     const pulse = 0.92 + 0.08 * Math.sin(time * 0.0016 + orb.x * 0.013);
     const baseAlpha = isFront ? 100 : 88;
-    const coreSize = Math.max(1.1, (1.4 + orb.sizeT * 1.8) * pr.scale);
+    const coreSize = Math.max(1.1, (1.4 + orb.sizeT * 1.8) * s);
 
     // One soft halo + a crisp small core — clean point of light, not a blob.
     p.fill(halo.h, halo.s, halo.b, isFront ? 18 : 9);
@@ -468,20 +540,32 @@ function drawOrbsFront(p, orbs, front, maxOrd, time, trig, sk) {
 
 function pickOrb(mx, my) {
   if (!state.skeleton) return null;
-  const trig = frameTrig(state.camera);
+  const { cosY, sinY, cosX, sinX } = frameTrig(state.camera);
+  const cam = state.camera;
   const sk = state.skeleton;
+  const baseX = sk.baseX;
+  const baseY = sk.baseY;
   let best = null;
-  let bestDist = 18;
+  let bestDist2 = 18 * 18; // compare squared distances; skip the per-orb sqrt
   for (const orb of state.orbs) {
     // Only orbs the growth front has already revealed are pickable, so the
     // tooltip never appears for an orb that isn't drawn yet.
     if (orb.ord > state.front) continue;
-    const pr = project(orb.x, orb.y, orb.z || 0, trig, sk.baseX, sk.baseY, state.camera);
-    const dx = mx - pr.sx;
-    const dy = my - pr.sy;
-    const d = Math.sqrt(dx * dx + dy * dy);
-    if (d < bestDist) {
-      bestDist = d;
+    const wz = orb.z || 0;
+    const dx = orb.x - baseX;
+    const dy = orb.y - baseY;
+    const x1 = dx * cosY - wz * sinY;
+    const z1 = dx * sinY + wz * cosY;
+    const y2 = dy * cosX - z1 * sinX;
+    const z2 = dy * sinX + z1 * cosX;
+    const s = (FOCAL / (FOCAL - z2)) * cam.zoom;
+    const sx = baseX + x1 * s + cam.panX;
+    const sy = baseY + y2 * s + cam.panY;
+    const ddx = mx - sx;
+    const ddy = my - sy;
+    const d2 = ddx * ddx + ddy * ddy;
+    if (d2 < bestDist2) {
+      bestDist2 = d2;
       best = orb;
     }
   }
